@@ -37,7 +37,7 @@ app.get('/api/status', (req, res) => {
 app.post('/api/info', (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL required' });
-    
+
     const platform = detectPlatform(url);
     if (platform === 'unknown') return res.status(400).json({ error: 'Unsupported URL' });
 
@@ -53,29 +53,43 @@ app.post('/api/info', (req, res) => {
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => stdout += d);
     child.stderr.on('data', (d) => stderr += d);
-    
+
     child.on('close', (code) => {
         if (code !== 0 || !stdout.trim()) {
             return res.status(500).json({ error: 'Failed to fetch info', details: stderr || 'No output' });
         }
         try {
             const info = JSON.parse(stdout.trim().split('\n')[0]);
-            const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
-                .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.quality_label || f.format_note || f.resolution, resolution: f.resolution, filesize: f.filesize || f.filesize_approx }))
-                .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
             
+            const formats = (info.formats || []).filter(f => f.vcodec !== 'none')
+                .map(f => ({ 
+                    format_id: f.format_id, 
+                    ext: f.ext, 
+                    quality: f.quality_label || f.format_note || f.resolution, 
+                    resolution: f.resolution, 
+                    filesize: f.filesize || f.filesize_approx,
+                    has_audio: f.acodec !== 'none'
+                }))
+                .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
+
             const audioFormats = (info.formats || []).filter(f => f.vcodec === 'none' && f.acodec !== 'none')
                 .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.format_note || (f.abr ? f.abr + 'k' : 'audio'), abr: f.abr, filesize: f.filesize || f.filesize_approx }))
                 .sort((a, b) => (b.abr || 0) - (a.abr || 0));
 
             if (formats.length === 0 && (platform === 'tiktok' || platform === 'instagram')) {
-                formats.push({ format_id: 'best', ext: 'mp4', quality: 'Best Quality', resolution: info.resolution || 'Unknown', filesize: info.filesize || info.filesize_approx });
+                formats.push({ format_id: 'best', ext: 'mp4', quality: 'Best Quality', resolution: info.resolution || 'Unknown', filesize: info.filesize || info.filesize_approx, has_audio: true });
             }
-const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
-    .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.quality_label || f.format_note || f.resolution, resolution: f.resolution, filesize: f.filesize || f.filesize_approx }))
-    .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
 
-            res.json({ title: info.title || 'Unknown', uploader: info.uploader || info.channel || 'Unknown', duration: info.duration || 0, thumbnail: info.thumbnail || '', view_count: info.view_count || 0, platform: platform, formats: formats.slice(0, 10), audio_formats: audioFormats.slice(0, 5) });
+            res.json({ 
+                title: info.title || 'Unknown', 
+                uploader: info.uploader || info.channel || 'Unknown', 
+                duration: info.duration || 0, 
+                thumbnail: info.thumbnail || '', 
+                view_count: info.view_count || 0, 
+                platform: platform, 
+                formats: formats.slice(0, 15), 
+                audio_formats: audioFormats.slice(0, 5) 
+            });
         } catch (e) {
             res.status(500).json({ error: 'Parse error', details: e.message });
         }
@@ -84,11 +98,8 @@ const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec
 
 app.post('/api/download', (req, res) => {
     const { url, format_id, type } = req.body;
-const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
-    .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.quality_label || f.format_note || f.resolution, resolution: f.resolution, filesize: f.filesize || f.filesize_approx }))
-    .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
     if (!url) return res.status(400).json({ error: 'URL required' });
-    
+
     const platform = detectPlatform(url);
     const downloadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     const outputTemplate = path.join(DOWNLOAD_DIR, '%(title)s [%(id)s].%(ext)s');
@@ -101,7 +112,8 @@ const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec
     } else if (platform === 'instagram') {
         args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36', url];
     } else {
-        args = ['-f', format_id || 'best[height<=1080]', '-o', outputTemplate, '--no-warnings', '--newline', url];
+        const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
+        args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
     }
 
     const dlProcess = spawn('yt-dlp', args);
@@ -168,4 +180,3 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('Video Downloader running at http://localhost:' + PORT);
     console.log('Platforms: YouTube, TikTok (no watermark), Instagram');
 });
-
