@@ -162,3 +162,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('Video Downloader running at http://localhost:' + PORT);
     console.log('Platforms: YouTube, TikTok (no watermark), Instagram');
 });
+
