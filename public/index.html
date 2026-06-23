@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Downloader</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;padding:20px}
+.container{max-width:800px;margin:0 auto}
+header{text-align:center;padding:30px 0}
+header h1{font-size:2.2rem;background:linear-gradient(135deg,#ff4757,#ff6b81);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+header p{color:#888;font-size:.9rem}
+.platforms{display:flex;justify-content:center;gap:20px;margin-top:15px;flex-wrap:wrap}
+.platform-tag{background:#1a1a25;border:1px solid #2a2a3a;padding:6px 14px;border-radius:20px;font-size:.8rem;color:#aaa}
+.status-bar{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:20px;font-size:.85rem}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#2ed573;animation:pulse 2s infinite}
+.status-dot.error{background:#ff4757}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.card{background:#12121a;border:1px solid #2a2a3a;border-radius:16px;padding:24px;margin-bottom:20px}
+.input-group{display:flex;gap:10px;margin-bottom:16px}
+input[type="url"]{flex:1;background:#1a1a25;border:1px solid #2a2a3a;border-radius:12px;padding:14px 18px;color:#e0e0e0;font-size:1rem;outline:none}
+input[type="url"]:focus{border-color:#ff4757}
+button{background:linear-gradient(135deg,#ff4757,#ff6b81);border:none;border-radius:12px;padding:14px 28px;color:white;font-size:1rem;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:#1a1a25;border:1px solid #2a2a3a;color:#e0e0e0}
+.btn-danger{background:transparent!important;border:1px solid #ff4757!important;color:#ff4757!important}
+.video-info{display:none}.video-info.active{display:block}
+.thumbnail{width:100%;max-height:300px;object-fit:cover;border-radius:12px;margin-bottom:16px}
+.video-meta{margin-bottom:20px}.video-meta h2{font-size:1.2rem;margin-bottom:8px}
+.video-meta .meta-row{display:flex;gap:16px;color:#888;font-size:.85rem;flex-wrap:wrap}
+.platform-badge{display:inline-block;color:white;padding:4px 12px;border-radius:20px;font-size:.75rem;font-weight:600;margin-bottom:12px}
+.platform-badge.tiktok{background:linear-gradient(135deg,#00f2ea,#ff0050)}
+.platform-badge.instagram{background:linear-gradient(135deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)}
+.platform-badge.youtube{background:linear-gradient(135deg,#ff4757,#ff6b81)}
+.formats-section{margin-top:20px}.formats-section h3{font-size:1rem;margin-bottom:12px;color:#888}
+.format-list{display:flex;flex-direction:column;gap:8px}
+.format-item{display:flex;align-items:center;justify-content:space-between;background:#1a1a25;border:1px solid #2a2a3a;border-radius:10px;padding:12px 16px;cursor:pointer}
+.format-item:hover{border-color:#ff4757}
+.format-item.selected{border-color:#ff4757;background:rgba(255,71,87,.1)}
+.format-quality{background:#ff4757;color:white;padding:4px 10px;border-radius:6px;font-size:.8rem;font-weight:600}
+.format-details{color:#888;font-size:.85rem}
+.format-size{color:#888;font-size:.85rem}
+.download-btn-small{padding:8px 16px;font-size:.85rem;border-radius:8px}
+.progress-container{display:none;margin-top:20px}.progress-container.active{display:block}
+.progress-bar-bg{background:#1a1a25;border-radius:10px;height:10px;overflow:hidden;margin-bottom:8px}
+.progress-bar-fill{height:100%;background:linear-gradient(90deg,#ff4757,#ff6b81);border-radius:10px;transition:width .3s ease;width:0%}
+.progress-text{text-align:center;font-size:.9rem;color:#888}
+.downloads-section{margin-top:20px}.downloads-section h3{font-size:1rem;margin-bottom:12px;color:#888}
+.file-list{display:flex;flex-direction:column;gap:8px}
+.file-item{display:flex;align-items:center;justify-content:space-between;background:#1a1a25;border:1px solid #2a2a3a;border-radius:10px;padding:14px 16px}
+.file-info{flex:1;min-width:0}.file-name{font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.file-meta{font-size:.8rem;color:#888}.file-actions{display:flex;gap:8px}
+.file-actions button{padding:8px 14px;font-size:.8rem}
+.empty-state{text-align:center;padding:40px;color:#888}
+.tabs{display:flex;gap:4px;margin-bottom:16px;background:#1a1a25;border-radius:10px;padding:4px}
+.tab{flex:1;padding:10px;text-align:center;border-radius:8px;cursor:pointer;font-size:.9rem;border:none;background:transparent;color:#888}
+.tab.active{background:#12121a;color:#e0e0e0;font-weight:600}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(100px);background:#12121a;border:1px solid #2a2a3a;padding:14px 24px;border-radius:12px;transition:transform .3s;z-index:1000}
+.toast.show{transform:translateX(-50%) translateY(0)}.toast.success{border-color:#2ed573}.toast.error{border-color:#ff4757}
+.loading{display:inline-block;width:20px;height:20px;border:2px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:white;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:600px){header h1{font-size:1.8rem}.input-group{flex-direction:column}button{width:100%}}
+</style>
+</head>
+<body>
+<div class="container">
+<header><h1>Video Downloader</h1><p>YouTube - TikTok - Instagram</p><div class="platforms"><div class="platform-tag">YouTube</div><div class="platform-tag">TikTok (No Watermark)</div><div class="platform-tag">Instagram</div></div></header>
+<div class="status-bar"><div class="status-dot" id="statusDot"></div><span id="statusText">Checking...</span></div>
+<div class="card">
+<div class="input-group"><input type="url" id="urlInput" placeholder="Paste YouTube, TikTok, or Instagram URL..."><button id="fetchBtn" onclick="fetchInfo()"><span id="fetchBtnText">Get Info</span></button></div>
+<div class="video-info" id="videoInfo">
+<div id="platformBadge" class="platform-badge youtube">YouTube</div>
+<img class="thumbnail" id="thumbnail" src="" alt="">
+<div class="video-meta"><h2 id="videoTitle">Title</h2><div class="meta-row"><span id="videoUploader">Channel</span><span id="videoDuration">Duration</span><span id="videoViews">Views</span></div></div>
+<div class="tabs"><button class="tab active" onclick="switchTab('video',this)">Video</button><button class="tab" onclick="switchTab('audio',this)">Audio</button></div>
+<div class="formats-section" id="videoFormats"><h3>Select Quality</h3><div class="format-list" id="formatList"></div></div>
+<div class="formats-section" id="audioFormats" style="display:none"><h3>Select Audio Quality</h3><div class="format-list" id="audioFormatList"></div></div>
+</div>
+<div class="progress-container" id="progressContainer"><div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div><div class="progress-text" id="progressText">Starting...</div></div>
+</div>
+<div class="card downloads-section"><h3>Downloads</h3><div class="file-list" id="fileList"><div class="empty-state"><p>No downloads yet</p></div></div></div>
+</div>
+<div class="toast" id="toast"><span id="toastMsg">Message</span></div>
+
+<script>
+var currentVideoUrl = '';
+var currentDownloadId = null;
+var progressInterval = null;
+var selectedFormat = null;
+
+function detectPlatform(url) {
+    if (url.indexOf('youtube.com') !== -1 || url.indexOf('youtu.be') !== -1) return 'youtube';
+    if (url.indexOf('tiktok.com') !== -1) return 'tiktok';
+    if (url.indexOf('instagram.com') !== -1) return 'instagram';
+    return 'unknown';
+}
+
+function checkStatus() {
+    fetch('/api/status')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var dot = document.getElementById('statusDot');
+            var text = document.getElementById('statusText');
+            if (data.yt_dlp === 'not installed') {
+                dot.className = 'status-dot error';
+                text.textContent = 'yt-dlp not installed';
+            } else {
+                dot.className = 'status-dot';
+                text.textContent = 'yt-dlp ' + data.yt_dlp + ' ready';
+            }
+        })
+        .catch(function() {
+            document.getElementById('statusDot').className = 'status-dot error';
+            document.getElementById('statusText').textContent = 'Server offline';
+        });
+}
+
+function fetchInfo() {
+    var url = document.getElementById('urlInput').value.trim();
+    if (!url) { showToast('Enter a URL', 'error'); return; }
+    
+    var platform = detectPlatform(url);
+    if (platform === 'unknown') {
+        showToast('Unsupported URL. Use YouTube, TikTok, or Instagram.', 'error');
+        return;
+    }
+
+    var btn = document.getElementById('fetchBtn');
+    var btnText = document.getElementById('fetchBtnText');
+    btn.disabled = true;
+    btnText.innerHTML = '<span class="loading"></span>';
+
+    fetch('/api/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+        if (data.error) throw new Error(data.error);
+        currentVideoUrl = url;
+        displayVideoInfo(data);
+        showToast('Video info loaded!', 'success');
+    })
+    .catch(function(err) {
+        showToast(err.message || 'Failed', 'error');
+    })
+    .finally(function() {
+        btn.disabled = false;
+        btnText.textContent = 'Get Info';
+    });
+}
+
+function displayVideoInfo(data) {
+    document.getElementById('videoInfo').classList.add('active');
+    
+    var badge = document.getElementById('platformBadge');
+    badge.className = 'platform-badge ' + (data.platform || 'youtube');
+    if (data.platform === 'tiktok') badge.textContent = 'TikTok (No Watermark)';
+    else if (data.platform === 'instagram') badge.textContent = 'Instagram';
+    else badge.textContent = 'YouTube';
+    
+    document.getElementById('thumbnail').src = data.thumbnail || '';
+    document.getElementById('videoTitle').textContent = data.title || 'Unknown';
+    document.getElementById('videoUploader').textContent = 'Channel: ' + (data.uploader || 'Unknown');
+    document.getElementById('videoDuration').textContent = 'Duration: ' + formatDuration(data.duration);
+    document.getElementById('videoViews').textContent = 'Views: ' + formatNumber(data.view_count);
+
+    var fl = document.getElementById('formatList');
+    fl.innerHTML = '';
+    if (data.formats && data.formats.length > 0) {
+        data.formats.forEach(function(fmt, i) {
+            var size = fmt.filesize ? formatBytes(fmt.filesize) : 'Unknown';
+            var el = document.createElement('div');
+            el.className = 'format-item' + (i === 0 ? ' selected' : '');
+            el.innerHTML = '<div class="format-info"><span class="format-quality">' + (fmt.quality || fmt.resolution) + '</span><span class="format-details">' + fmt.ext.toUpperCase() + '</span></div><span class="format-size">' + size + '</span>';
+            el.onclick = function() { selectFormat(el, fmt.format_id, 'video'); };
+            fl.appendChild(el);
+        });
+        if (data.formats[0]) selectedFormat = { id: data.formats[0].format_id, type: 'video' };
+    } else {
+        fl.innerHTML = '<div class="empty-state">No video formats available</div>';
+    }
+
+    var al = document.getElementById('audioFormatList');
+    al.innerHTML = '';
+    if (data.audio_formats && data.audio_formats.length > 0) {
+        data.audio_formats.forEach(function(fmt) {
+            var size = fmt.filesize ? formatBytes(fmt.filesize) : 'Unknown';
+            var el = document.createElement('div');
+            el.className = 'format-item';
+            el.innerHTML = '<div class="format-info"><span class="format-quality">' + fmt.quality + '</span><span class="format-details">' + fmt.ext.toUpperCase() + '</span></div><span class="format-size">' + size + '</span>';
+            el.onclick = function() { selectFormat(el, fmt.format_id, 'audio'); };
+            al.appendChild(el);
+        });
+    } else {
+        al.innerHTML = '<div class="empty-state">No audio formats available</div>';
+    }
+}
+
+function selectFormat(el, formatId, type) {
+    var items = document.querySelectorAll('.format-item');
+    for (var i = 0; i < items.length; i++) {
+        items[i].classList.remove('selected');
+        var oldBtn = items[i].querySelector('.download-btn-small');
+        if (oldBtn) oldBtn.remove();
+    }
+    el.classList.add('selected');
+    selectedFormat = { id: formatId, type: type };
+
+    var btn = document.createElement('button');
+    btn.className = 'download-btn-small';
+    btn.textContent = 'Download';
+    btn.onclick = function(e) { e.stopPropagation(); startDownload(); };
+    el.appendChild(btn);
+}
+
+function switchTab(tab, btn) {
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+    btn.classList.add('active');
+    document.getElementById('videoFormats').style.display = tab === 'video' ? 'block' : 'none';
+    document.getElementById('audioFormats').style.display = tab === 'audio' ? 'block' : 'none';
+}
+
+function startDownload() {
+    if (!selectedFormat || !currentVideoUrl) return;
+    document.getElementById('progressContainer').classList.add('active');
+    document.getElementById('progressBar').style.width = '0%';
+    document.getElementById('progressText').textContent = 'Starting...';
+
+    fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: currentVideoUrl,
+            format_id: selectedFormat.id,
+            type: selectedFormat.type
+        })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+        if (data.error) throw new Error(data.error);
+        currentDownloadId = data.downloadId;
+        pollProgress(data.downloadId);
+    })
+    .catch(function(err) {
+        showToast(err.message, 'error');
+        document.getElementById('progressContainer').classList.remove('active');
+    });
+}
+
+function pollProgress(id) {
+    if (progressInterval) clearInterval(progressInterval);
+    progressInterval = setInterval(function() {
+        fetch('/api/download/' + id)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                document.getElementById('progressBar').style.width = data.progress + '%';
+                if (data.status === 'downloading') {
+                    document.getElementById('progressText').textContent = 'Downloading... ' + data.progress.toFixed(1) + '%';
+                } else if (data.status === 'completed') {
+                    clearInterval(progressInterval);
+                    document.getElementById('progressBar').style.width = '100%';
+                    document.getElementById('progressText').textContent = 'Complete!';
+                    showToast('Downloaded!', 'success');
+                    setTimeout(function() { document.getElementById('progressContainer').classList.remove('active'); }, 3000);
+                    loadFiles();
+                } else if (data.status === 'error') {
+                    clearInterval(progressInterval);
+                    document.getElementById('progressText').textContent = 'Failed';
+                    showToast(data.error || 'Failed', 'error');
+                }
+            })
+            .catch(function() { clearInterval(progressInterval); });
+    }, 1000);
+}
+
+function loadFiles() {
+    fetch('/api/files')
+        .then(function(res) { return res.json(); })
+        .then(function(files) {
+            var list = document.getElementById('fileList');
+            if (!files.length) {
+                list.innerHTML = '<div class="empty-state"><p>No downloads yet</p></div>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                html += '<div class="file-item"><div class="file-info"><div class="file-name">' + escapeHtml(f.name) + '</div><div class="file-meta">' + formatBytes(f.size) + ' - ' + new Date(f.created).toLocaleString() + '</div></div><div class="file-actions"><a href="' + f.url + '" download><button class="btn-secondary">Download</button></a><button class="btn-danger" onclick="deleteFile(\'' + encodeURIComponent(f.name) + '\')">Delete</button></div></div>';
+            }
+            list.innerHTML = html;
+        })
+        .catch(function() {});
+}
+
+function deleteFile(name) {
+    if (!confirm('Delete this file?')) return;
+    fetch('/api/files/' + name, { method: 'DELETE' })
+        .then(function() { loadFiles(); showToast('Deleted', 'success'); })
+        .catch(function() { showToast('Failed', 'error'); });
+}
+
+function showToast(msg, type) {
+    var toast = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    toast.className = 'toast ' + type + ' show';
+    setTimeout(function() { toast.classList.remove('show'); }, 3000);
+}
+
+function formatDuration(s) {
+    if (!s) return '0:00';
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    if (h) return h + ':' + m.toString().padStart(2, '0') + ':' + sec.toString().padStart(2, '0');
+    return m + ':' + sec.toString().padStart(2, '0');
+}
+
+function formatNumber(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toString();
+}
+
+function formatBytes(b) {
+    if (!b) return 'Unknown';
+    var sizes = ['B', 'KB', 'MB', 'GB'];
+    var i = Math.floor(Math.log(b) / Math.log(1024));
+    return (b / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+function escapeHtml(t) {
+    var d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+}
+
+document.getElementById('urlInput').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') fetchInfo();
+});
+
+checkStatus();
+loadFiles();
+</script>
+</body>
+</html>
+
