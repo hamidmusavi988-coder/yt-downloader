@@ -71,6 +71,9 @@ app.post('/api/info', (req, res) => {
             if (formats.length === 0 && (platform === 'tiktok' || platform === 'instagram')) {
                 formats.push({ format_id: 'best', ext: 'mp4', quality: 'Best Quality', resolution: info.resolution || 'Unknown', filesize: info.filesize || info.filesize_approx });
             }
+const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
+    .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.quality_label || f.format_note || f.resolution, resolution: f.resolution, filesize: f.filesize || f.filesize_approx }))
+    .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
 
             res.json({ title: info.title || 'Unknown', uploader: info.uploader || info.channel || 'Unknown', duration: info.duration || 0, thumbnail: info.thumbnail || '', view_count: info.view_count || 0, platform: platform, formats: formats.slice(0, 10), audio_formats: audioFormats.slice(0, 5) });
         } catch (e) {
