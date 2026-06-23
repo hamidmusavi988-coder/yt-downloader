@@ -84,29 +84,9 @@ const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec
 
 app.post('/api/download', (req, res) => {
     const { url, format_id, type } = req.body;
-// Show ALL video formats (including video-only for higher quality)
-const formats = (info.formats || [])
-    .filter(f => f.vcodec !== 'none')  // Video-only OR combined, just needs video
-    .map(f => ({
-        format_id: f.format_id,
-        ext: f.ext,
-        quality: f.quality_label || f.format_note || f.resolution,
-        resolution: f.resolution,
-        filesize: f.filesize || f.filesize_approx,
-        has_audio: f.acodec !== 'none'
-    }))
+const formats = (info.formats || []).filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
+    .map(f => ({ format_id: f.format_id, ext: f.ext, quality: f.quality_label || f.format_note || f.resolution, resolution: f.resolution, filesize: f.filesize || f.filesize_approx }))
     .sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
-
-// Remove duplicates by resolution, prefer ones with audio
-const seen = new Set();
-const uniqueFormats = [];
-for (const f of formats) {
-    const key = f.resolution + f.ext;
-    if (!seen.has(key)) {
-        seen.add(key);
-        uniqueFormats.push(f);
-    }
-}
     if (!url) return res.status(400).json({ error: 'URL required' });
     
     const platform = detectPlatform(url);
