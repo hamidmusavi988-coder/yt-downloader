@@ -45,6 +45,7 @@ app.post('/api/info', (req, res) => {
     if (platform === 'tiktok') {
         args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36');
     } else if (platform === 'instagram') {
+    args.push('--cookies', 'cookies.txt');
         args.push('--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36');
     }
     args.push(url);
@@ -110,7 +111,7 @@ app.post('/api/download', (req, res) => {
     } else if (platform === 'tiktok') {
         args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--user-agent', 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36', '--embed-metadata', url];
     } else if (platform === 'instagram') {
-        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36', url];
+        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'cookies.txt', '--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36', url];
     } else {
         const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
         args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
