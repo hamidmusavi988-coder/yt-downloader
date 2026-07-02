@@ -35,7 +35,10 @@ app.get('/api/status', (req, res) => {
 });
 
 app.post('/api/info', (req, res) => {
-    const { url } = req.body;
+    console.log('DEBUG /api/info received URL:', req.body.url);
+    let { url } = req.body;
+    if (url.includes('tiktok.com/t/') && !url.endsWith('/')) { url += '/'; }
+    console.log('DEBUG after fix URL:', url);
     if (!url) return res.status(400).json({ error: 'URL required' });
 
     const platform = detectPlatform(url);
@@ -43,7 +46,7 @@ app.post('/api/info', (req, res) => {
 
     let args = ['-j', '--no-warnings'];
     if (platform === 'tiktok') {
-        args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36');
+    args.push('--cookies', 'tiktok_cookies.txt');
     } else if (platform === 'instagram') {
     args.push('--cookies', 'cookies.txt');
         args.push('--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36');
@@ -57,6 +60,7 @@ app.post('/api/info', (req, res) => {
 
     child.on('close', (code) => {
         if (code !== 0 || !stdout.trim()) {
+            console.log('DEBUG yt-dlp stderr:', stderr);
             return res.status(500).json({ error: 'Failed to fetch info', details: stderr || 'No output' });
         }
         try {
@@ -98,7 +102,9 @@ app.post('/api/info', (req, res) => {
 });
 
 app.post('/api/download', (req, res) => {
-    const { url, format_id, type } = req.body;
+    let { url, format_id, type } = req.body;
+    if (url.includes('tiktok.com/t/') && !url.endsWith('/')) { url += '/'; }
+    console.log('DEBUG after fix URL:', url);
     if (!url) return res.status(400).json({ error: 'URL required' });
 
     const platform = detectPlatform(url);
@@ -109,7 +115,7 @@ app.post('/api/download', (req, res) => {
     if (type === 'audio') {
         args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
     } else if (platform === 'tiktok') {
-        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--user-agent', 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36', '--embed-metadata', url];
+        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
     } else if (platform === 'instagram') {
         args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'cookies.txt', '--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36', url];
     } else {
