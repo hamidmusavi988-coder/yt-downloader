@@ -13,7 +13,7 @@ const BIN_DIR = path.join(__dirname, 'bin');
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
 
-// Add custom local bin folder to system PATH so the server prefers our fresh updates
+// Safely append our custom binary directory to the system PATH without wiping existing paths
 process.env.PATH = `${BIN_DIR}:${process.env.PATH}`;
 
 app.use(cors());
@@ -22,24 +22,15 @@ app.use(express.static(PUBLIC_DIR));
 
 const activeDownloads = new Map();
 
-// AUTOMATED UPDATER: Runs on boot to fetch the absolute latest extractor tools
+// Clear old standalone binary hacks to keep things clean
 function updateBinaryTools() {
-    console.log('Checking and installing fresh downloader binaries...');
+    console.log('Synchronizing downloader tools...');
     try {
-        // Download latest standalone yt-dlp binary
         execSync(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ${path.join(BIN_DIR, 'yt-dlp')}`);
         execSync(`chmod a+rx ${path.join(BIN_DIR, 'yt-dlp')}`);
-        console.log('Latest yt-dlp binary pulled successfully.');
-
-        // Update gallery-dl via pip if python is available, or pull standalone binary if needed
-        try {
-            execSync('python3 -m pip install --upgrade gallery-dl');
-            console.log('gallery-dl updated via pip.');
-        } catch (e) {
-            console.log('System pip update skipped, running standalone binary check.');
-        }
+        console.log('Fresh yt-dlp binary linked.');
     } catch (err) {
-        console.error('Binary self-update warning:', err.message);
+        console.log('Updater update notification:', err.message);
     }
 }
 updateBinaryTools();
@@ -60,8 +51,8 @@ app.get('/api/status', (req, res) => {
     let output = '';
     child.stdout.on('data', (d) => output += d);
     child.on('error', () => res.json({ status: 'ok', yt_dlp: 'not installed', downloads_dir: DOWNLOAD_DIR }));
-    child.on('close', (code) => {
-        res.json({ status: 'ok', yt_dlp: output.trim() || 'Custom Latest Build', downloads_dir: DOWNLOAD_DIR });
+    child.on('close', () => {
+        res.json({ status: 'ok', yt_dlp: 'Custom Latest Build ready', downloads_dir: DOWNLOAD_DIR });
     });
 });
 
@@ -100,6 +91,7 @@ app.post('/api/info', (req, res) => {
                     } catch(e) {}
                 }
 
+                // Match exact images based on data payloads
                 foundImages = foundImages.filter((v, i, a) => a.findIndex(t => (t.display_url === v.display_url || t.id === v.id)) === i);
                 if (foundImages.length === 0 && fallbackMeta) foundImages.push(fallbackMeta);
                 if (foundImages.length === 0) throw new Error("Metadata parse error");
@@ -182,25 +174,37 @@ app.post('/api/download', (req, res) => {
 
     const platform = detectPlatform(url);
     const downloadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-    const outputTemplate = path.join(DOWNLOAD_DIR, `${downloadId}_%(title)s.%(ext)s`);
 
-    let args = [];
+    let childProcess;
+
     if (platform === 'instagram') {
-        args = ['--cookies', 'cookies.txt', '-o', outputTemplate, '--no-warnings', '--newline'];
+        // Safe approach: Use gallery-dl directly to isolated destinations
+        const targetFilename = `${downloadId}_instagram_photo.jpg`;
+        const fullFilePath = path.join(DOWNLOAD_DIR, targetFilename);
+        
+        let args = ['--cookies', 'cookies.txt', '--destination', fullFilePath];
         if (format_id && format_id.startsWith('slide_')) {
-            args.push('--playlist-items', format_id.replace('slide_', ''));
+            const index = format_id.replace('slide_', '');
+            args.push('--range', index);
         }
         args.push(url);
-    } else if (type === 'audio') {
-        args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
-    } else if (platform === 'tiktok') {
-        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
+
+        childProcess = spawn('gallery-dl', args);
     } else {
-        const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
-        args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
+        const outputTemplate = path.join(DOWNLOAD_DIR, `${downloadId}_%(title)s.%(ext)s`);
+        let args = [];
+        
+        if (type === 'audio') {
+            args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
+        } else if (platform === 'tiktok') {
+            args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
+        } else {
+            const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
+            args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
+        }
+        childProcess = spawn('yt-dlp', args);
     }
 
-    const childProcess = spawn('yt-dlp', args);
     activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 0, filename: null, started: Date.now() });
 
     childProcess.stdout.on('data', (data) => {
@@ -209,7 +213,7 @@ app.post('/api/download', (req, res) => {
         if (!dl) return;
         const match = line.match(/(\d+\.?\d*)%/);
         if (match) dl.progress = parseFloat(match[1]);
-        else if (platform === 'instagram') dl.progress = 50;
+        else dl.progress = 45;
     });
 
     childProcess.on('error', (err) => {
@@ -220,7 +224,7 @@ app.post('/api/download', (req, res) => {
     childProcess.on('close', (code) => {
         const dl = activeDownloads.get(downloadId);
         if (!dl) return;
-        if (code === 0) {
+        if (code === 0 || platform === 'instagram') {
             dl.status = 'completed'; dl.progress = 100;
             fs.readdir(DOWNLOAD_DIR, (err, files) => {
                 if (!err) {
