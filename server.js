@@ -84,12 +84,10 @@ app.post('/api/info', (req, res) => {
                 for (let line of lines) {
                     try {
                         const parsed = JSON.parse(line);
-                        // gallery-dl outputs arrays where index 2 holds the content metadata
                         if (Array.isArray(parsed) && parsed[2]) {
                             const meta = parsed[2];
                             if (!fallbackMeta) fallbackMeta = meta;
                             
-                            // Track individual images in slide carousels
                             if (meta.display_url || meta.image_versions2) {
                                 foundImages.push(meta);
                             }
@@ -103,10 +101,9 @@ app.post('/api/info', (req, res) => {
 
                 if (foundImages.length === 0) throw new Error("Could not parse image metadata");
 
-                // Generate distinct select list entries for every slide image discovered
                 const dynamicFormats = foundImages.map((img, idx) => {
                     return {
-                        format_id: `image_${idx + 1}`, // Unique target id for backend extraction
+                        format_id: `image_${idx + 1}`, 
                         ext: 'jpg',
                         quality: foundImages.length > 1 ? `Download Image #${idx + 1}` : 'Original Image',
                         resolution: img.dimensions ? `${img.dimensions.width}x${img.dimensions.height}` : 'High Res',
@@ -223,12 +220,11 @@ app.post('/api/download', (req, res) => {
             url
         ];
 
-        // If a specific image index format key is sent (e.g., 'image_3')
-        // adjust gallery-dl parameters to selectively pick that item index
+        // FIX: Format explicit slide targeting ranges (e.g., '3-3' instead of just '3')
         if (format_id && format_id.startsWith('image_')) {
             const rangeIndex = parseInt(format_id.replace('image_', ''));
             if (!isNaN(rangeIndex)) {
-                args.push('--range', `${rangeIndex}`);
+                args.push('--range', `${rangeIndex}-${rangeIndex}`);
             }
         }
 
