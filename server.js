@@ -3,6 +3,7 @@ const cors = require('cors');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,7 +54,6 @@ app.post('/api/info', (req, res) => {
     if (!url) return res.status(400).json({ error: 'URL required' });
 
     if (url.includes('tiktok.com/t/') && !url.endsWith('/')) { url += '/'; }
-    console.log('DEBUG after fix URL:', url);
 
     const platform = detectPlatform(url);
     if (platform === 'unknown') return res.status(400).json({ error: 'Unsupported or invalid URL' });
@@ -88,25 +88,27 @@ app.post('/api/info', (req, res) => {
                             const meta = parsed[2];
                             if (!fallbackMeta) fallbackMeta = meta;
                             
-                            if (meta.display_url || meta.image_versions2 || meta.shortcode) {
+                            // Capture the direct CDN link asset
+                            if (meta.display_url) {
                                 foundImages.push(meta);
                             }
                         }
                     } catch(e) {}
                 }
 
-                // Fallback filtering out duplicates or indexing system rows
-                foundImages = foundImages.filter((v, i, a) => a.findIndex(t => (t.display_url === v.display_url || t.id === v.id)) === i);
+                // Deduplicate items based on direct image URLs
+                foundImages = foundImages.filter((v, i, a) => a.findIndex(t => t.display_url === v.display_url) === i);
 
                 if (foundImages.length === 0 && fallbackMeta) {
                     foundImages.push(fallbackMeta);
                 }
 
-                if (foundImages.length === 0) throw new Error("Could not parse image metadata");
+                if (foundImages.length === 0 || !foundImages[0].display_url) throw new Error("Could not parse image metadata");
 
                 const dynamicFormats = foundImages.map((img, idx) => {
                     return {
-                        format_id: `image_${idx + 1}`, 
+                        // Store the direct image URL straight inside the format_id attribute
+                        format_id: `DIRECTURL||${img.display_url}`, 
                         ext: 'jpg',
                         quality: foundImages.length > 1 ? `Download Image #${idx + 1}` : 'Original Image',
                         resolution: img.dimensions ? `${img.dimensions.width}x${img.dimensions.height}` : 'High Res',
@@ -211,70 +213,76 @@ app.post('/api/download', (req, res) => {
     const platform = detectPlatform(url);
     const downloadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
-    let childProcess;
+    // CRITICAL FIX: If it's a direct link signature, download the exact image payload straight away
+    if (format_id && format_id.startsWith('DIRECTURL||')) {
+        const directCdnUrl = format_id.replace('DIRECTURL||', '');
+        const targetFilename = `${downloadId}_instagram_photo.jpg`;
+        const fullFilePath = path.join(DOWNLOAD_DIR, targetFilename);
 
-    if (platform === 'instagram') {
-        let targetIndex = 1;
-        if (format_id && format_id.startsWith('image_')) {
-            targetIndex = parseInt(format_id.replace('image_', '')) || 1;
-        }
+        const dlTrack = { url, status: 'downloading', progress: 30, filename: null, started: Date.now() };
+        activeDownloads.set(downloadId, dlTrack);
 
-        const args = [
-            '--directory', DOWNLOAD_DIR,
-            '-o', 'directory=[]',
-            '-o', `filename=${downloadId}_instagram_${targetIndex}.{extension}`,
-            '--cookies', 'cookies.txt',
-            '--range', `${targetIndex}-${targetIndex}`,
-            url
-        ];
-
-        childProcess = spawn('gallery-dl', args);
-        activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 50, filename: null, targetIndex, started: Date.now() });
-
-        childProcess.stdout.on('data', (data) => {
-            const dl = activeDownloads.get(downloadId);
-            if (dl) dl.progress = 75;
-        });
-
-        childProcess.on('error', (err) => {
-            const dl = activeDownloads.get(downloadId);
-            if (dl) {
-                dl.status = 'error';
-                dl.error = 'Gallery-dl extraction process failed.';
+        const fileStream = fs.createWriteStream(fullFilePath);
+        
+        https.get(directCdnUrl, (response) => {
+            if (response.statusCode !== 200) {
+                dlTrack.status = 'error';
+                dlTrack.error = 'Failed to fetch image stream from Instagram networks.';
+                fileStream.close();
+                fs.unlinkSync(fullFilePath);
+                return;
             }
+            
+            response.pipe(fileStream);
+
+            fileStream.on('finish', () => {
+                fileStream.close();
+                dlTrack.status = 'completed';
+                dlTrack.progress = 100;
+                dlTrack.filename = targetFilename;
+            });
+        }).on('error', (err) => {
+            dlTrack.status = 'error';
+            dlTrack.error = err.message;
+            fileStream.close();
+            if (fs.existsSync(fullFilePath)) fs.unlinkSync(fullFilePath);
         });
 
-    } else {
-        const outputTemplate = path.join(DOWNLOAD_DIR, `${downloadId}_%(title)s.%(ext)s`);
-        let args;
-        if (type === 'audio') {
-            args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
-        } else if (platform === 'tiktok') {
-            args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
-        } else {
-            const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
-            args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
-        }
-
-        childProcess = spawn('yt-dlp', args);
-        activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 0, filename: null, started: Date.now() });
-
-        childProcess.stdout.on('data', (data) => {
-            const line = data.toString();
-            const dl = activeDownloads.get(downloadId);
-            if (!dl) return;
-            const match = line.match(/(\d+\.?\d*)%/);
-            if (match) dl.progress = parseFloat(match[1]);
-        });
-
-        childProcess.on('error', (err) => {
-            const dl = activeDownloads.get(downloadId);
-            if (dl) {
-                dl.status = 'error';
-                dl.error = 'Downloader process error: ' + err.message;
-            }
-        });
+        return res.json({ downloadId, status: 'started' });
     }
+
+    // Default processing for YouTube / TikTok via standard tools
+    let childProcess;
+    const outputTemplate = path.join(DOWNLOAD_DIR, `${downloadId}_%(title)s.%(ext)s`);
+    let args;
+
+    if (type === 'audio') {
+        args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
+    } else if (platform === 'tiktok') {
+        args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
+    } else {
+        const formatSpec = format_id ? format_id + '+bestaudio/best' : 'bestvideo+bestaudio/best';
+        args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
+    }
+
+    childProcess = spawn('yt-dlp', args);
+    activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 0, filename: null, started: Date.now() });
+
+    childProcess.stdout.on('data', (data) => {
+        const line = data.toString();
+        const dl = activeDownloads.get(downloadId);
+        if (!dl) return;
+        const match = line.match(/(\d+\.?\d*)%/);
+        if (match) dl.progress = parseFloat(match[1]);
+    });
+
+    childProcess.on('error', (err) => {
+        const dl = activeDownloads.get(downloadId);
+        if (dl) {
+            dl.status = 'error';
+            dl.error = 'Downloader process error: ' + err.message;
+        }
+    });
 
     childProcess.on('close', (code) => {
         const dl = activeDownloads.get(downloadId);
@@ -283,13 +291,7 @@ app.post('/api/download', (req, res) => {
             dl.status = 'completed'; dl.progress = 100;
             fs.readdir(DOWNLOAD_DIR, (err, files) => {
                 if (!err) {
-                    // Match the precise, specific image index tag we configured earlier
-                    let matchedFile;
-                    if (platform === 'instagram') {
-                        matchedFile = files.find(f => f.startsWith(`${downloadId}_instagram_${dl.targetIndex}`));
-                    } else {
-                        matchedFile = files.find(f => f.startsWith(downloadId) && !f.endsWith('.part') && !f.endsWith('.ytdl'));
-                    }
+                    const matchedFile = files.find(f => f.startsWith(downloadId) && !f.endsWith('.part') && !f.endsWith('.ytdl'));
                     if (matchedFile) dl.filename = matchedFile;
                 }
             });
