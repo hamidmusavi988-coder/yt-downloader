@@ -88,12 +88,15 @@ app.post('/api/info', (req, res) => {
                             const meta = parsed[2];
                             if (!fallbackMeta) fallbackMeta = meta;
                             
-                            if (meta.display_url || meta.image_versions2) {
+                            if (meta.display_url || meta.image_versions2 || meta.shortcode) {
                                 foundImages.push(meta);
                             }
                         }
                     } catch(e) {}
                 }
+
+                // Fallback filtering out duplicates or indexing system rows
+                foundImages = foundImages.filter((v, i, a) => a.findIndex(t => (t.display_url === v.display_url || t.id === v.id)) === i);
 
                 if (foundImages.length === 0 && fallbackMeta) {
                     foundImages.push(fallbackMeta);
@@ -204,7 +207,6 @@ app.post('/api/download', (req, res) => {
     if (!url) return res.status(400).json({ error: 'URL required' });
 
     if (url.includes('tiktok.com/t/') && !url.endsWith('/')) { url += '/'; }
-    console.log('DEBUG after fix URL:', url);
 
     const platform = detectPlatform(url);
     const downloadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
@@ -212,24 +214,22 @@ app.post('/api/download', (req, res) => {
     let childProcess;
 
     if (platform === 'instagram') {
+        let targetIndex = 1;
+        if (format_id && format_id.startsWith('image_')) {
+            targetIndex = parseInt(format_id.replace('image_', '')) || 1;
+        }
+
         const args = [
             '--directory', DOWNLOAD_DIR,
             '-o', 'directory=[]',
-            '-o', `filename=${downloadId}_instagram_{id}.{extension}`,
+            '-o', `filename=${downloadId}_instagram_${targetIndex}.{extension}`,
             '--cookies', 'cookies.txt',
+            '--range', `${targetIndex}-${targetIndex}`,
             url
         ];
 
-        // FIX: Format explicit slide targeting ranges (e.g., '3-3' instead of just '3')
-        if (format_id && format_id.startsWith('image_')) {
-            const rangeIndex = parseInt(format_id.replace('image_', ''));
-            if (!isNaN(rangeIndex)) {
-                args.push('--range', `${rangeIndex}-${rangeIndex}`);
-            }
-        }
-
         childProcess = spawn('gallery-dl', args);
-        activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 50, filename: null, started: Date.now() });
+        activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 50, filename: null, targetIndex, started: Date.now() });
 
         childProcess.stdout.on('data', (data) => {
             const dl = activeDownloads.get(downloadId);
@@ -237,11 +237,10 @@ app.post('/api/download', (req, res) => {
         });
 
         childProcess.on('error', (err) => {
-            console.error('Instagram download process error:', err);
             const dl = activeDownloads.get(downloadId);
             if (dl) {
                 dl.status = 'error';
-                dl.error = 'Gallery-dl is missing or failed on cloud instance.';
+                dl.error = 'Gallery-dl extraction process failed.';
             }
         });
 
@@ -284,7 +283,13 @@ app.post('/api/download', (req, res) => {
             dl.status = 'completed'; dl.progress = 100;
             fs.readdir(DOWNLOAD_DIR, (err, files) => {
                 if (!err) {
-                    const matchedFile = files.find(f => f.startsWith(downloadId) && !f.endsWith('.part') && !f.endsWith('.ytdl'));
+                    // Match the precise, specific image index tag we configured earlier
+                    let matchedFile;
+                    if (platform === 'instagram') {
+                        matchedFile = files.find(f => f.startsWith(`${downloadId}_instagram_${dl.targetIndex}`));
+                    } else {
+                        matchedFile = files.find(f => f.startsWith(downloadId) && !f.endsWith('.part') && !f.endsWith('.ytdl'));
+                    }
                     if (matchedFile) dl.filename = matchedFile;
                 }
             });
