@@ -34,9 +34,9 @@ function detectPlatform(url) {
 app.get('/api/status', (req, res) => {
     const child = spawn('yt-dlp', ['--version']);
     let output = '';
-    
+
     child.stdout.on('data', (d) => output += d);
-    
+
     child.on('error', () => {
         return res.json({ status: 'ok', yt_dlp: 'not installed', downloads_dir: DOWNLOAD_DIR });
     });
@@ -62,7 +62,7 @@ app.post('/api/info', (req, res) => {
         const args = ['-j', '--cookies', 'cookies.txt', url];
         const child = spawn('gallery-dl', args);
         let stdout = '', stderr = '';
-        
+
         child.stdout.on('data', (d) => stdout += d);
         child.stderr.on('data', (d) => stderr += d);
 
@@ -78,27 +78,51 @@ app.post('/api/info', (req, res) => {
             }
             try {
                 const lines = stdout.trim().split('\n');
-                let mediaData = null;
+                let foundImages = [];
+                let fallbackMeta = null;
+
                 for (let line of lines) {
                     try {
                         const parsed = JSON.parse(line);
+                        // gallery-dl outputs arrays where index 2 holds the content metadata
                         if (Array.isArray(parsed) && parsed[2]) {
-                            mediaData = parsed[2];
-                            break;
+                            const meta = parsed[2];
+                            if (!fallbackMeta) fallbackMeta = meta;
+                            
+                            // Track individual images in slide carousels
+                            if (meta.display_url || meta.image_versions2) {
+                                foundImages.push(meta);
+                            }
                         }
                     } catch(e) {}
                 }
 
-                if (!mediaData) throw new Error("Could not parse image metadata");
+                if (foundImages.length === 0 && fallbackMeta) {
+                    foundImages.push(fallbackMeta);
+                }
+
+                if (foundImages.length === 0) throw new Error("Could not parse image metadata");
+
+                // Generate distinct select list entries for every slide image discovered
+                const dynamicFormats = foundImages.map((img, idx) => {
+                    return {
+                        format_id: `image_${idx + 1}`, // Unique target id for backend extraction
+                        ext: 'jpg',
+                        quality: foundImages.length > 1 ? `Download Image #${idx + 1}` : 'Original Image',
+                        resolution: img.dimensions ? `${img.dimensions.width}x${img.dimensions.height}` : 'High Res',
+                        filesize: null,
+                        has_audio: false
+                    };
+                });
 
                 res.json({
-                    title: mediaData.description || mediaData.shortcode || 'Instagram Image/Post',
-                    uploader: mediaData.username || 'Instagram User',
+                    title: foundImages[0].description || foundImages[0].shortcode || 'Instagram Post',
+                    uploader: foundImages[0].username || 'Instagram User',
                     duration: 0,
-                    thumbnail: mediaData.display_url || '',
+                    thumbnail: foundImages[0].display_url || '',
                     view_count: 0,
                     platform: platform,
-                    formats: [{ format_id: 'best', ext: 'jpg', quality: 'Original Image', resolution: 'High Res', filesize: null, has_audio: false }],
+                    formats: dynamicFormats,
                     audio_formats: []
                 });
             } catch (e) {
@@ -198,6 +222,15 @@ app.post('/api/download', (req, res) => {
             '--cookies', 'cookies.txt',
             url
         ];
+
+        // If a specific image index format key is sent (e.g., 'image_3')
+        // adjust gallery-dl parameters to selectively pick that item index
+        if (format_id && format_id.startsWith('image_')) {
+            const rangeIndex = parseInt(format_id.replace('image_', ''));
+            if (!isNaN(rangeIndex)) {
+                args.push('--range', `${rangeIndex}`);
+            }
+        }
 
         childProcess = spawn('gallery-dl', args);
         activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 50, filename: null, started: Date.now() });
