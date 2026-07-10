@@ -3,7 +3,6 @@ const cors = require('cors');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,13 +66,11 @@ app.post('/api/info', (req, res) => {
         child.stderr.on('data', (d) => stderr += d);
 
         child.on('error', (err) => {
-            console.log('DEBUG gallery-dl missing, falling back to basic layout parsing');
             return sendInstagramFallback(res, platform);
         });
 
         child.on('close', (code) => {
             if (!stdout.trim()) {
-                console.log('DEBUG gallery-dl stderr:', stderr);
                 return sendInstagramFallback(res, platform);
             }
             try {
@@ -87,28 +84,24 @@ app.post('/api/info', (req, res) => {
                         if (Array.isArray(parsed) && parsed[2]) {
                             const meta = parsed[2];
                             if (!fallbackMeta) fallbackMeta = meta;
-                            
-                            // Capture the direct CDN link asset
-                            if (meta.display_url) {
+                            if (meta.display_url || meta.shortcode) {
                                 foundImages.push(meta);
                             }
                         }
                     } catch(e) {}
                 }
 
-                // Deduplicate items based on direct image URLs
-                foundImages = foundImages.filter((v, i, a) => a.findIndex(t => t.display_url === v.display_url) === i);
+                foundImages = foundImages.filter((v, i, a) => a.findIndex(t => (t.display_url === v.display_url || t.id === v.id)) === i);
 
                 if (foundImages.length === 0 && fallbackMeta) {
                     foundImages.push(fallbackMeta);
                 }
 
-                if (foundImages.length === 0 || !foundImages[0].display_url) throw new Error("Could not parse image metadata");
+                if (foundImages.length === 0) throw new Error("Could not parse image metadata");
 
                 const dynamicFormats = foundImages.map((img, idx) => {
                     return {
-                        // Store the direct image URL straight inside the format_id attribute
-                        format_id: `DIRECTURL||${img.display_url}`, 
+                        format_id: `slide_${idx + 1}`, 
                         ext: 'jpg',
                         quality: foundImages.length > 1 ? `Download Image #${idx + 1}` : 'Original Image',
                         resolution: img.dimensions ? `${img.dimensions.width}x${img.dimensions.height}` : 'High Res',
@@ -149,7 +142,6 @@ app.post('/api/info', (req, res) => {
 
         child.on('close', (code) => {
             if (code !== 0 || !stdout.trim()) {
-                console.log('DEBUG yt-dlp stderr:', stderr);
                 return res.status(500).json({ error: 'Failed to fetch info', details: stderr || 'No output' });
             }
             try {
@@ -212,51 +204,20 @@ app.post('/api/download', (req, res) => {
 
     const platform = detectPlatform(url);
     const downloadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-
-    // CRITICAL FIX: If it's a direct link signature, download the exact image payload straight away
-    if (format_id && format_id.startsWith('DIRECTURL||')) {
-        const directCdnUrl = format_id.replace('DIRECTURL||', '');
-        const targetFilename = `${downloadId}_instagram_photo.jpg`;
-        const fullFilePath = path.join(DOWNLOAD_DIR, targetFilename);
-
-        const dlTrack = { url, status: 'downloading', progress: 30, filename: null, started: Date.now() };
-        activeDownloads.set(downloadId, dlTrack);
-
-        const fileStream = fs.createWriteStream(fullFilePath);
-        
-        https.get(directCdnUrl, (response) => {
-            if (response.statusCode !== 200) {
-                dlTrack.status = 'error';
-                dlTrack.error = 'Failed to fetch image stream from Instagram networks.';
-                fileStream.close();
-                fs.unlinkSync(fullFilePath);
-                return;
-            }
-            
-            response.pipe(fileStream);
-
-            fileStream.on('finish', () => {
-                fileStream.close();
-                dlTrack.status = 'completed';
-                dlTrack.progress = 100;
-                dlTrack.filename = targetFilename;
-            });
-        }).on('error', (err) => {
-            dlTrack.status = 'error';
-            dlTrack.error = err.message;
-            fileStream.close();
-            if (fs.existsSync(fullFilePath)) fs.unlinkSync(fullFilePath);
-        });
-
-        return res.json({ downloadId, status: 'started' });
-    }
-
-    // Default processing for YouTube / TikTok via standard tools
-    let childProcess;
     const outputTemplate = path.join(DOWNLOAD_DIR, `${downloadId}_%(title)s.%(ext)s`);
-    let args;
 
-    if (type === 'audio') {
+    let args = [];
+
+    if (platform === 'instagram') {
+        args = ['--cookies', 'cookies.txt', '-o', outputTemplate, '--no-warnings', '--newline'];
+        
+        // Use playlist tracking to pull only the chosen index slide
+        if (format_id && format_id.startsWith('slide_')) {
+            const slideIndex = format_id.replace('slide_', '');
+            args.push('--playlist-items', slideIndex);
+        }
+        args.push(url);
+    } else if (type === 'audio') {
         args = ['-f', format_id || 'bestaudio', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outputTemplate, '--no-warnings', '--newline', url];
     } else if (platform === 'tiktok') {
         args = ['-f', format_id || 'best', '-o', outputTemplate, '--no-warnings', '--newline', '--cookies', 'tiktok_cookies.txt', '--embed-metadata', url];
@@ -265,7 +226,7 @@ app.post('/api/download', (req, res) => {
         args = ['-f', formatSpec, '--merge-output-format', 'mp4', '-o', outputTemplate, '--no-warnings', '--newline', url];
     }
 
-    childProcess = spawn('yt-dlp', args);
+    const childProcess = spawn('yt-dlp', args);
     activeDownloads.set(downloadId, { process: childProcess, url, status: 'downloading', progress: 0, filename: null, started: Date.now() });
 
     childProcess.stdout.on('data', (data) => {
@@ -274,6 +235,7 @@ app.post('/api/download', (req, res) => {
         if (!dl) return;
         const match = line.match(/(\d+\.?\d*)%/);
         if (match) dl.progress = parseFloat(match[1]);
+        else if (platform === 'instagram') dl.progress = 50; // Give visual feedback for image streams
     });
 
     childProcess.on('error', (err) => {
