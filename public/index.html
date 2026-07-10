@@ -79,7 +79,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   .input-group{flex-direction:column;gap:8px}
   #fetchBtn{width:100%}
   .card{padding:16px}
-  
+
   /* Stack list rows cleanly on mobile when selected */
   .format-item { padding: 12px; }
   .format-size { margin-left: auto; font-size: 0.8rem; }
@@ -205,6 +205,8 @@ function displayVideoInfo(data) {
             var el = document.createElement('div');
             el.className = 'format-item' + (i === 0 ? ' selected' : '');
             el.innerHTML = '<div class="format-info"><span class="format-quality">' + (fmt.quality || fmt.resolution) + '</span><span class="format-details">' + fmt.ext.toUpperCase() + '</span></div><span class="format-size">' + size + '</span>';
+            
+            // Explicit lexical passing of target info object references to block overlapping scopes
             el.onclick = function() { selectFormat(el, fmt.format_id, 'video'); };
             fl.appendChild(el);
             if (i === 0) { selectFormat(el, fmt.format_id, 'video'); }
@@ -253,7 +255,7 @@ function switchTab(tab, btn) {
     btn.classList.add('active');
     document.getElementById('videoFormats').style.display = tab === 'video' ? 'block' : 'none';
     document.getElementById('audioFormats').style.display = tab === 'audio' ? 'block' : 'none';
-    
+
     var activeList = tab === 'video' ? document.getElementById('formatList') : document.getElementById('audioFormatList');
     var firstItem = activeList.querySelector('.format-item');
     if (firstItem) { firstItem.click(); } else { selectedFormat = null; }
